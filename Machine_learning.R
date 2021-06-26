@@ -3,4 +3,9 @@
 #Project: Covid prediction
 #Machine learning
 
-#Predict cases and fatilities for the right set of dates 
+#Predict cases and fatalities for the right set of dates 
+
+setwd("~/Desktop/RGroupAssignment/R_Ml/data")
+data <- read.csv("train.csv")
+
+
