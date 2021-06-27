@@ -113,17 +113,19 @@ countriesdata <- function(data){
 
 strain <- countriesdata(datrain)
 stest <- countriesdata(datest)
-
+stest[1]
+strain[1]
 z <- data.frame(strain[1])
 typeof(z[3:4])
-
+z$Afghanistan.target
 
 ########RIDGE ######## 
 
 #split only the train ;)
-splitting_train <- function(sdata){
+splitting_train <- function(sdata,tdata){
   #transform the splitted dataset as a data frame
   dat <- data.frame(sdata)
+  dattest <- data.frame(tdata)
   # perc splitting
   perc_split <- c(0.7, 0.15, 0.15);
   
@@ -142,17 +144,70 @@ splitting_train <- function(sdata){
   val <- dat[val_index,]; 
   test  <- dat[test_index,];
   
-  print('a')
+
   #training set to matrix
- # xridge <- model.matrix(~.,data=train[3:4])
+ xridge <- model.matrix(~.,data= train[3:4])
   lambdas <- 10^seq(2, -3, by = -.1)
-  ridge_reg = glmnet(train[3:4], train[2], nlambda = 25, alpha = 0, family = 'gaussian', lambda = lambdas)
-  print("c")
-  cv_ridge <- cv.glmnet(train[3:4], train[2], alpha = 0, lambda = lambdas)
+  ridge_reg = glmnet(xridge, train[,2], nlambda = 25, alpha = 0, family = 'gaussian', lambda = lambdas)
+
+  cv_ridge <- cv.glmnet(xridge,train[,2], alpha = 0, lambda = lambdas)
   optimal_lambda <- cv_ridge$lambda.min
-  return(ridge_reg, optimal_lambda)
+  
+  xridget <- model.matrix(~.,data= test[3:4])
+  # Prediction and evaluation on train data
+  predictions_train <- predict(ridge_reg, newx = xridget, s = optimal_lambda)
+  error <- rmse(actual = test[,2],predicted = predictions_train)
+  
+  # baseline predict with mean 
+  baseline <- data.frame(true = test[,2])
+  baseline$predict <- round(mean(train[,2]))
+  errorbase <-  rmse(actual = test[,2],predicted = baseline$predict)
+  
+  #predict kaggle values 
+  kaggleridge <- model.matrix(~.,data= dattest[3:4])
+  prediction_test <- predict(ridge_reg, newx = kaggleridge, s = optimal_lambda)
+  Kaggle_ridge <- merge(dattest,prediction_test)
+  
+  return(list(ridge_reg, optimal_lambda,error,errorbase,Kaggle_ridge))
 }
-splitting_train(strain[1])
+
+#Training with the first country only
+#visuaise responce 
+outputridge <- splitting_train(strain[1],stest[1])
+typeof(outputridge)
+outputridge
+
+
+#building the test set with more than one country
+#the training function is done by country 
+count = 1
+kaggle_submit <- data.frame(Country_Region=character(0),ForecastId=integer(0),day=integer(0),month=integer(0),target=numeric(0))
+for (country in strain){
+  print(country)
+ print(splitting_train(country,stest[count])) 
+  outputridge <- splitting_train(country,stest[count])
+  outputridge <- data.frame(outputridge[6])
+  
+
+  outputridge$Country_Region <- outputridge[,1]
+  outputridge$ForecastId <- outputridge[,2]
+  outputridge$day <- outputridge[,3]
+  outputridge$month <- outputridge[,4]
+  outputridge$target <- outputridge[,5]
+  ridge <- subset(outputridge, select = c(Country_Region,ForecastId,day,month,target))
+  
+  kaggle_submit <- union(kaggle_submit,ridge)
+  count = count + 1
+  if (count ==3){break}
+}
+
+
+
+
+
+
+
+
 
 
 
@@ -168,16 +223,10 @@ mainEffects <- dummyVars(~ Country_Region, data = x)
 
 
 
-xrt <- subset(xt, select = c(ConfirmedCases,month))
-xridget <- model.matrix(~.,data=xrt)
-# Prediction and evaluation on train data
-predictions_train <- predict(ridge_reg, newx = xridget, s = optimal_lambda)
-rmse(actual = test$target,predicted = predictions_train)
 
-# baseline predict with mean 
-baseline <- data.frame(true = test$target)
-baseline$predict <- round(mean(train$target))
-rmse(actual = test$target,predicted = baseline$predict)
+
+
+
 
 
 
