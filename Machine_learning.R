@@ -127,7 +127,7 @@ splitting_train <- function(sdata,tdata){
   dat <- data.frame(sdata)
   dattest <- data.frame(tdata)
   # perc splitting
-  perc_split <- c(0.7, 0.15, 0.15);
+  perc_split <- c(0.79, 0.01, 0.20);
   
   
   # row indices for training data (70%)
@@ -183,10 +183,8 @@ outputridge
 count = 1
 kaggle_submit <- data.frame(Country_Region=character(0),ForecastId=integer(0),day=integer(0),month=integer(0),target=numeric(0))
 for (country in strain){
-  print(country)
- print(splitting_train(country,stest[count])) 
   outputridge <- splitting_train(country,stest[count])
-  outputridge <- data.frame(outputridge[6])
+  outputridge <- data.frame(outputridge[5])
   
 
   outputridge$Country_Region <- outputridge[,1]
@@ -201,26 +199,7 @@ for (country in strain){
   if (count ==3){break}
 }
 
-
-
-
-
-
-
-
-
-
-
-#dummify province and country 
-#For complete dataset for stacking 
-mainEffects <- dummyVars(~ Country_Region, data = x)
-#Too many countries ideas to dumify ?
-
-
-
-
-
-
+kaggle_submit
 
 
 
@@ -231,43 +210,118 @@ mainEffects <- dummyVars(~ Country_Region, data = x)
 
 
 ######## Regressor FOREST###########
-#Cannot handle more than 53 categories
 
 
-# Set grid ranges
-params <- list(ntree_values=c(10,500),
-               mtry_values=c(2, 10),
-               nodesize_values=c(3, 10));
+#split only the train ;)
+splitting_rf <- function(sdata){
+  #transform the splitted dataset as a data frame
+  dat <- data.frame(sdata)
+  
+  #Replca remaining na with 0
+  dat[is.na(dat)] <- 0
+  
+  #dattest <- data.frame(tdata)
+  # perc splitting
+  perc_split <- c(0.79, 0.01, 0.20);
+  
+  
+  # row indices for training data (70%)
+  train_index <- sample(1:nrow(dat), perc_split[1]*nrow(dat));  
+  
+  # row indices for validation data (15%)
+  val_index <- sample(setdiff(1:nrow(dat), train_index), perc_split[2]*nrow(dat));  
+  
+  # row indices for test data (15%)
+  test_index <- setdiff(1:nrow(dat), c(train_index, val_index));
+  
+  # split data
+  train <- dat[train_index,]; 
+  val <- dat[val_index,]; 
+  test  <- dat[test_index,];
+  
+  # Set grid ranges
+  params <- list(ntree_values=seq(1, 151, by = 25)  ,
+                 mtry_values= seq(2, 10, by = 2) ,
+                 nodesize_values=seq(3, 10, by = 3)  );
+  ### GRID
+  grid_results_rf <- foreach (ntree = params$ntree_values, .combine = rbind)%:%
+    foreach (mtry = params$mtry_values, .combine = rbind)%:%
+    foreach (nodesize = params$nodesize_values, .packages = c("randomForest", "data.table","Metrics"), .combine = rbind)%dopar%{
+      
+      set.seed(100);
+      # Train
+      model <- randomForest(train[,3:4], y = train[,2],
+                               ntree=ntree, mtry=mtry,nodesize = nodesize,importance = TRUE);
+      
+      # Predict
+      pred_test <- predict(model, newdata = test, type = "response");
+      
+      
+      # Evaluation
+      rmse_test <- rmse(actual = test[,2], pred_test);
+      
+      ### Results
+      ret<-data.table(ntree = ntree, mtry = mtry, nodesize = nodesize,
+                      rmse_test = rmse_test);
+      
+    }
+  mod <- grid_results_rf[order(rmse_test)];
+ 
+  return(mod)
+}
 
-### GRID
-grid_results_rf <- foreach (ntree = params$ntree_values, .combine = rbind)%:%
-  foreach (mtry = params$mtry_values, .combine = rbind)%:%
-  foreach (nodesize = params$nodesize_values, .packages = c("randomForest", "data.table", "pROC"), .combine = rbind)%dopar%{
-    
-    # Log
-    print(sprintf("Start of ntree = %s - mtry = %s - nodesize = %s", ntree, mtry, nodesize));
-    
-    # Train
-    set.seed(100);
-    model.rf <- randomForest(x, y = train$target,
-                          ntree=ntree, mtry=mtry,nodesize = nodesize,importance = TRUE, na.action = na.omit);
-    
-    # Predict
-    pred_train <- predict(model.rf, newdata = train, type = "response")[,2];
-    pred_val<- predict(model.rf, newdata = val, type = "response")[,2];
-    
-    # Evaluation
-    auc_train <- AUC(target = train$target, prediction =  pred_train, quiet = TRUE);
-    auc_val <- AUC(target = val$target, prediction =  pred_val, quiet = TRUE);
-    
-    # Log
-    print(sprintf("End of ntree = %s - mtry = %s - nodesize = %s. AUC train = %s - AUC val = %s", 
-                  ntree, mtry, nodesize, auc_train, auc_val));
-    
-    
-    ### Results
-    ret<-data.table(ntree = ntree, mtry = mtry, nodesize = nodesize,
-                    auc_train = auc_train,  auc_val = auc_val);
-    ret
-  }
+
+predicting <- function(sdata, tdata) {
+  dat <- data.frame(sdata)
+  dattest <- data.frame(tdata)
+  grid_results_rf <- splitting_rf(dat)
+  best <- grid_results_rf[1];
+
+  #Train witht he full dataset this time
+  optimal_model <- randomForest(dat[,3:4], y = dat[,2], ntree  = as.integer(best[1,1]), mtry = as.integer(best[1,2]), nodesize = as.integer(best[1,3]))
+  pred_kaggle <- predict(optimal_model, newdata = dattest[,3:4], type = "response")
+  Kaggle_regression <- merge(dattest, pred_kaggle)
+  return(Kaggle_regression)
+}
+
+
+predicting(strain[1],stest[1])
+
+
+
+count = 1
+kaggle_submit <- data.frame(Country_Region=character(0),ForecastId=integer(0),day=integer(0),month=integer(0),target=numeric(0))
+for (country in strain){
+  outputrf <- predicting(country,stest[count])
+  outputrf <- data.frame(outputrf)
+  
+  
+  outputrf$Country_Region <- outputrf[,1]
+  outputrf$ForecastId <- outputrf[,2]
+  outputrf$day <- outputrf[,3]
+  outputrf$month <- outputrf[,4]
+  outputrf$target <- outputrf[,5]
+  rf <- subset(outputrf, select = c(Country_Region,ForecastId,day,month,target))
+  
+  kaggle_submit <- union(kaggle_submit,rf)
+  count = count + 1
+  if (count ==3){break}
+}
+
+
+
+
+
+
+
+
+optimal_param <- randomForest(train[,3:4], y = train[,2], ntree  = best[1], mtry = best[2], nodesize = best[3])
+Kaggle_ridge <- merge(dattest,prediction_test)
+
+
+
+
+
+
+
 
