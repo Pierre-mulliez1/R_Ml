@@ -28,7 +28,8 @@ path_test <- "data/test.csv"
 path_location <- "data/country_location.xlsx"
 datrain <- read.csv(path_train)
 datest <- read.csv(path_test)
-
+tail(datrain)
+tail(datest)
 #Continent and sub region dataset imported (instead of hard code) this will allow us to use features such as dummifying 
 #or categorical values in random forest
 continent <- read.csv('data/countryContinent.csv')
@@ -113,19 +114,24 @@ countriesdata <- function(data){
 
 strain <- countriesdata(datrain)
 stest <- countriesdata(datest)
-stest[2]
-strain[1]
+data.frame(stest[1]) %>% arrange(.,Afghanistan.day)
+data.frame(strain[1]) %>% arrange(.,Afghanistan.day)
 z <- data.frame(strain[1])
 typeof(z[3:4])
 z$Afghanistan.target
+
 
 ########RIDGE ######## 
 
 #split only the train ;)
 splitting_train <- function(sdata,tdata){
-  #transform the splitted dataset as a data frame
+  #transform the splitted dataset as a data frame and order it by day
   dat <- data.frame(sdata)
-  dattest <- data.frame(tdata)
+  dat <- dat[ order( dat[,3] ),]
+  dattest <- data.frame(tdata) 
+  dattest <- dattest[ order( dattest[,3] ),]
+  colnames(dattest)[3] <- "day"
+  
   # perc splitting
   perc_split <- c(0.79, 0.01, 0.20);
   
@@ -148,14 +154,15 @@ splitting_train <- function(sdata,tdata){
   #training set to matrix
  xridge <- model.matrix(~.,data= train[3:4])
   lambdas <- 10^seq(2, -3, by = -.1)
-  ridge_reg = glmnet(xridge, train[,2], nlambda = 25, alpha = 0, family = 'gaussian', lambda = lambdas)
 
   cv_ridge <- cv.glmnet(xridge,train[,2], alpha = 0, lambda = lambdas)
   optimal_lambda <- cv_ridge$lambda.min
   
+  ridge_reg = glmnet(xridge, train[,2], nlambda = 25, alpha = 0, family = 'gaussian', lambda = optimal_lambda)
+  
   xridget <- model.matrix(~.,data= test[3:4])
   # Prediction and evaluation on train data
-  predictions_train <- predict(ridge_reg, newx = xridget, s = optimal_lambda)
+  predictions_train <- round(predict(ridge_reg, newx = xridget, s = optimal_lambda))
   error <- rmse(actual = test[,2],predicted = predictions_train)
   
   # baseline predict with mean 
@@ -165,8 +172,12 @@ splitting_train <- function(sdata,tdata){
   
   #predict kaggle values 
   kaggleridge <- model.matrix(~.,data= dattest[3:4])
-  prediction_test <- predict(ridge_reg, newx = kaggleridge, s = optimal_lambda)
-  Kaggle_ridge <- merge(dattest,prediction_test)
+  prediction_test <- round(predict(ridge_reg, newx = kaggleridge, s = optimal_lambda))
+  prediction_test <- data.frame(prediction_test)
+  
+  #Apply after reorder
+  prediction_test$day <- seq(93,135, by = 1)
+  Kaggle_ridge <- merge(dattest,prediction_test, by = "day" )
   
   return(list(ridge_reg, optimal_lambda,error,errorbase,Kaggle_ridge))
 }
@@ -177,7 +188,6 @@ outputridge <- splitting_train(strain[1],stest[1])
 typeof(outputridge)
 outputridge
 
-
 #building the test set with more than one country
 #the training function is done by country 
 count = 1
@@ -187,22 +197,21 @@ for (country in strain){
   outputridge <- data.frame(outputridge[5])
   
 
-  outputridge$Country_Region <- outputridge[,1]
-  outputridge$ForecastId <- outputridge[,2]
-  outputridge$day <- outputridge[,3]
+  outputridge$Country_Region <- outputridge[,2]
+  outputridge$ForecastId <- outputridge[,3]
+  outputridge$day <- outputridge[,1]
   outputridge$month <- outputridge[,4]
   outputridge$target <- outputridge[,5]
   ridge <- subset(outputridge, select = c(Country_Region,ForecastId,day,month,target))
-  
   kaggle_submit <- union(kaggle_submit,ridge)
   count = count + 1
   if (count ==3){break}
 }
 
+length(kaggle_submit[kaggle_submit$Country_Region == "Afghanistan",]$day)
+length(unique((kaggle_submit[kaggle_submit$Country_Region == "Afghanistan",]$day)))
 kaggle_submit
-
-
-
+#ridgeordered <- (kaggle_submit %>% group_by(day()) %>% summarise(day = min(day), Country_Region = min(Country_Region)) %>% arrange(.,day)) 
 
 
 
@@ -285,7 +294,8 @@ predicting <- function(sdata, tdata) {
 }
 
 
-predicting(strain[2],stest[2])
+tail <- predicting(strain[2],stest[2])
+#max(tail[3])/30
 
 
 
