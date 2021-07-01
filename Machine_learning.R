@@ -113,7 +113,7 @@ countriesdata <- function(data){
 
 strain <- countriesdata(datrain)
 stest <- countriesdata(datest)
-stest[1]
+stest[2]
 strain[1]
 z <- data.frame(strain[1])
 typeof(z[3:4])
@@ -209,7 +209,7 @@ kaggle_submit
 
 
 
-######## Regressor FOREST###########
+######## Regressor random FOREST###########
 
 
 #split only the train ;)
@@ -240,9 +240,9 @@ splitting_rf <- function(sdata){
   test  <- dat[test_index,];
   
   # Set grid ranges
-  params <- list(ntree_values=seq(1, 151, by = 25)  ,
-                 mtry_values= seq(2, 10, by = 2) ,
-                 nodesize_values=seq(3, 10, by = 3)  );
+  params <- list(ntree_values=seq(50, 400, by = 50)  ,
+                 mtry_values= seq(20, 30, by = 2) ,
+                 nodesize_values=seq(3, 9, by = 2)  );
   ### GRID
   grid_results_rf <- foreach (ntree = params$ntree_values, .combine = rbind)%:%
     foreach (mtry = params$mtry_values, .combine = rbind)%:%
@@ -285,7 +285,7 @@ predicting <- function(sdata, tdata) {
 }
 
 
-predicting(strain[1],stest[1])
+predicting(strain[2],stest[2])
 
 
 
@@ -316,7 +316,7 @@ for (country in strain){
 
 
 optimal_param <- randomForest(train[,3:4], y = train[,2], ntree  = best[1], mtry = best[2], nodesize = best[3])
-Kaggle_ridge <- merge(dattest,prediction_test)
+Kaggle_rf <- merge(dattest,prediction_test)
 
 
 
