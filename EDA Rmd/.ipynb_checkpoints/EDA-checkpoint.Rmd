@@ -1,0 +1,295 @@
+---
+title: "Group Assignment Advanced R - COVID19-Global-forecasting-week 4"
+output:
+  html_notebook: 
+    toc: yes
+    toc_float: yes
+    toc_collapsed: yes
+    toc_depth: 4
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# Objectives {#obj}
+
+The objectives of the project are:  
+
+1. Explore, describe and analyze the data by performing an EDA.
+
+2. Report findings from the EDA and give some insights from the different visualizations.
+
+3. Embedding the necessary EDA sections into an interactive shinny app.
+
+# Problem definition {#problem}
+
+For this project we will work with a Kaggle dataset from the "COVID19 Global Forecasting (Week 4)" [link](https://www.kaggle.com/c/covid19-global-forecasting-week-4). As described in kaggle, the objective of the contest is to "forecasting confirmed cases and fatalities between April 15 and May 14 by region." It continues by saying, "the primary goal isn't only to produce accurate forecasts. It’s also to identify factors that appear to impact the transmission rate of COVID-19." The datasets used for this project is explored below.
+
+# Libraries {#libraries}
+
+To accomplish all objectives we'll be utilizing the following libraries. Information about these libraries and material used in the development of this project please check [annex I](#annex-1) and [annex II](#annex-2), respectively.
+
+```{r libraries, include=FALSE}
+
+# Loading libraries
+library(kableExtra)
+library(data.table)
+library(knitr)
+library(papeR)
+library(leaflet)
+library(corrplot)
+library(RColorBrewer)
+library(DataExplorer)
+library(ggplot2)
+library(scales)
+library(gtable)
+library(grid)
+library(egg)
+library(gridExtra)
+library(factoextra)
+library(dplyr)
+library(caret)
+library(Amelia)
+library(tseries)
+library(forecast)
+library(FactoMineR)
+library(urca)
+
+library(tidyr)
+library(psych)
+library(dplyr)
+```
+
+# EDA {#eda}
+
+## Datasets {#data}
+
+```{r include=FALSE}
+# Loading all relevant files
+## creating path to folder - easy to change later
+folder_path <- "/Users/germandesouza/Desktop/Advanced R EDA/Data" # change this if you want to create new sections in the EDA
+## assigning to variable
+train <- as.data.table(read.csv(file.path(folder_path,"train.csv"))) # created as dt
+test <- as.data.table(read.csv(file.path(folder_path,"test.csv")))
+```
+
+We have been provided with three different files (training, test and submission data sets), however we feel the need of solely analyzing the training data set. The main reasoning behind this is because the submission is a sample for formatting purposes and the test files are partially replicating the same information seen in the training file, but with different time horizons:
+
+- `train.csv`: This file contains training data with 6 main features (`ForectastId`,`Province_State`,`Country_Region`,`Date`,`ConfirmedCases`,`Fatalities`) between the date ranges of **`r min(as.Date(train$Date))`** and **`r max(as.Date(train$Date))`**.
+
+- `test.csv`: This file contains test data with 4 main features (`ForectastId`,`Province_State`,`Country_Region`,`Date`) between the date ranges of **`r min(as.Date(test$Date))`** and **`r max(as.Date(test$Date))`**. --> **Notice how both training and test have a week of overlap with the training data.**
+
+- `submission.csv`: A sample submission in the correct format; again, predictions should be *cumulative*.
+
+## Understanding the training data set {#understanding}
+
+### Overall structure {#structure}
+
+```{r include=FALSE}
+# Checking feature classes to create a table for Rmarkdown
+sapply(train,class)
+dim(train)
+length(unique(train$Country_Region))
+dim(train[,uniqueN(Id),.(Date)])
+```
+
+Regarding the structure of the COVID-19 week 4 training data set, the data set accounts with **`r dim(train)[1]` observations** and **`r dim(train)[2]` features**. Each observation corresponds to a specific country registry of COVID data (in this case, `ConfirmedCases` and `Fatalities` data) on a daily basis. In this data set we have a total number of **`r length(unique(train$Country_Region))` countries** in a timespan of **`r dim(train[,uniqueN(Id),.(Date)])[1]` days** starting from **`r min(as.Date(train$Date))`** to **`r max(as.Date(train$Date))`**. Below you can find a high-level view of the structure, different data types and the assignation of different feature types that we are going to work with.
+
+| Feature Name | Data Type | Information | Information Feature Type |  |
+|-|-|-|-|-|
+| **ForecastId** | Integer | Unique ID of forecast | Independent Variable |  |
+| **Province_State** | Factorial | Province state of the country | Independent Variable |  |
+| **Country_Region** | Factorial | Country name | Independent Variable |  |
+| **Date** | Factorial | Upload date of COVID registered data | Independent Variable |  |
+| **ConfirmedCases** | Numeric | Confirmed cases of Covid-19 | Target Variable |  |
+| **Fatalities** | Numeric | Fatalities caused by Covid-19 | Target Variable |  |
+
+### Checking for data completeness
+
+```{r include=FALSE}
+# If we check nulls in all columns from the dataset, we can see that there are no nulls. However, this isn't true as there are blank values in column "Province_State"
+cbind(lapply(lapply(train, is.na), sum))
+
+# Checking for blank values in "Province_State"
+sapply(train, function(x) sum(is.na(x) | x == "")) # As you can see, Province_State contains lots of empty values
+
+# Checking proportion of blank values within the column "Province_State"
+sapply(train, function(x) sum(is.na(x) | x == ""))[2]/dim(train)[1] # Almost a 57,5% of blank values, lets check the countries that have "Province_State"
+
+# Checking which countries don't have blanks in "Province_State"
+hello <- distinct(train %>% filter(Province_State!="") %>% transmute(Country_Region))
+hello$Country_Region <- as.factor(as.character(hello$Country_Region))
+
+length(unique(train$Country_Region)) # There are 184 countries as we have mentioned in the section above
+
+paste(c("The countries with Province/State informed:", levels(hello$Country_Region)), collapse=" ") #There are 8 Countries that have "Province_State" out of 184 Countries
+```
+
+In terms of data completeness, we can state that there aren't null values within the data set, however our team has noticed that there are various blank values in the `Province_State` column. We have identified Almost a **`r round(((sapply(train, function(x) sum(is.na(x) | x == ""))[2]/dim(train)[1])*100),2)`%** of blank values within the training data set. Further implementing data exploration, we were capable of distinguishing countries that had blank values and those that didn't. Interestingly, there are 8 countries that didn't have blank `Province_States`, these are as follows **`r paste(c(levels(hello$Country_Region)), collapse=", ")`**. There are approximately 176 countries without `Province_States`, this is a fundamental point that we will have to take into consideration when we build our models. 
+
+For representation purposes, below we have attached a Missingness Map with Na values. Before executing this map, we have transformed the blank spaces to Na's. By doing this, we can visually see the severity of predicting straight away without some data enhancement to the current training data set.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+dat2 <- as.data.table(apply(train, 2, function(x) gsub("^$|^ $", NA, x)))
+missmap(dat2, 
+        col = c("red", "grey"), 
+        x.cex = 0.5,
+        y.cex = 0.5,
+        legend = FALSE)
+```
+### Overall COVID-19 Analysis
+
+
+### Univariate Analysis per Country
+
+In this section our team aims to learn the overall distribution and dispersion of target variables (`Fatalities`,`ConfirmedCases`). In the first two tables below we will show a summary statistics table highlighting relevant metrics per country. 
+
+#### Confirmed COVID-19 Cases
+
+Give explanation of the confirmed table below.
+```{r}
+hello2 <- train[,3:5] 
+hello2 <- hello2 %>% group_by(Date, Country_Region) %>% summarise(ConfirmedCases = sum(ConfirmedCases))
+hello2 <- pivot_wider(hello2, names_from = Country_Region, values_from = ConfirmedCases)
+
+confirmed <- as.data.frame(describe(hello2[,2:185])) # descriptive statistics using psych
+confirmed <- confirmed[order(-confirmed$mean),3:13]
+confirmed
+```
+
+#### Fatalities COVID-19 Cases
+
+Give explanation of the fatalities table below.
+```{r, warning=FALSE}
+hello3 <- train[,3:4] %>% mutate(Fatalities=train$Fatalities)
+hello3 <- hello3 %>% group_by(Date, Country_Region) %>% summarise(Fatalities = sum(Fatalities))
+hello3 <- pivot_wider(hello3, names_from = Country_Region, values_from = Fatalities)
+
+fatalities <- as.data.frame(describe(hello3[,2:185]))# descriptive statistics using psych
+fatalities <- fatalities[order(-fatalities$mean),3:13]
+fatalities
+```
+
+# Annex I {#annex-1}
+
+This section list libraries we used in the realization of this project.
+
+
+## For data manipulation
+
+[data.table](http://127.0.0.1:32237/help/library/data.table/doc/datatable-intro.html)
+
+
+[dplyr](https://dplyr.tidyverse.org)  
+Provides a consistent set of verbs (mutate, select, filter, ...) that help you solve the most common data manipulation challenges.
+
+
+[Amelia](https://cran.r-project.org/web/packages/Amelia/index.html)  
+A program for missing data
+
+## For reporting
+
+[knitr](https://yihui.org/knitr/)  
+Elegant, flexible, and fast dynamic report generation with R
+
+
+## For tables
+
+kable and kableExtra ([link](https://cran.r-project.org/web/packages/kableExtra/vignettes/awesome_table_in_html.html#Table_Styles))  
+We used these libraries to create awesome HTML tables.
+
+## For data exploration
+
+[DataExplorer](https://cran.r-project.org/web/packages/DataExplorer/index.html)  
+This library supports in the scan, analysis and visualization of variables.
+
+[dlookr](https://cran.r-project.org/web/packages/dlookr/index.html)  
+Supports data diagnosis, exploration, and transformation.
+
+
+## For mapping
+
+[leaflet](https://rstudio.github.io/leaflet/)  
+Provides support in the creation of interactive maps.
+
+
+## For statistical reporting
+
+[papeR](https://cran.r-project.org/web/packages/papeR/vignettes/papeR_introduction.html)  
+We used this library to handle variable labels and to create (complex) summary tables. 
+
+
+## For plots
+
+[ggplot2](https://ggplot2.tidyverse.org)  
+For graphics creation
+
+
+[scales](https://www.rdocumentation.org/packages/scales/versions/0.4.1)
+Graphical scales map data to aesthetics, and provide methods for automatically determining breaks and labels for axes and legends.
+
+
+gtable, grid, egg, gridExtra ([link](https://cran.r-project.org/web/packages/egg/vignettes/Ecosystem.html))  
+Used to layout multiple plots in a page. See explanation in link.
+
+
+[corrplot](https://cran.r-project.org/web/packages/corrplot/vignettes/corrplot-intro.html)  
+To display a graphical correlation matrix (correlation plot) for fast data understanding.
+
+
+[RColorBrewer](https://www.rdocumentation.org/packages/RColorBrewer/versions/1.1-2/topics/RColorBrewer)  
+Provides nice looking color palettes
+
+
+[Factoextra](http://www.sthda.com/english/wiki/factoextra-r-package-easy-multivariate-data-analyses-and-elegant-visualization)  
+Visualization of multivariate data analysis results
+
+
+## For prediction
+
+[caret](https://topepo.github.io/caret/)  
+Streamsline the process for creating predictive models
+
+
+[forecast](https://cran.r-project.org/web/packages/forecast/forecast.pdf)  
+Forecasting functions for time series and linear models
+
+
+## For time series
+
+[tseries](https://cran.r-project.org/web/packages/tseries/index.html)  
+Time series analysis
+
+# Annex II {#annex-2}
+
+This section list useful links used in the realization of this project.
+
+For EDA: 
+[data explorer](https://rpubs.com/mark_sch7/DataExplorerPackage)
+
+For plotting: 
+[ablines](http://www.sthda.com/english/wiki/abline-r-function-an-easy-way-to-add-straight-lines-to-a-plot-using-r-software), 
+[ggplot](https://datacarpentry.org/R-ecology-lesson/04-visualization-ggplot2.html), 
+[ggplot2](https://lgatto.github.io/2017_11_09_Rcourse_Jena/data-visualization-with-ggplot2.html), 
+[ggplot3](https://www.datanovia.com/en/blog/ggplot-axis-labels/)
+
+For RMarkdown: 
+[cross-referencing](https://ulyngs.github.io/oxforddown/cites-and-refs.html#cross-referencing), 
+[notebook](https://bookdown.org/yihui/rmarkdown/notebook.html), 
+[notebook2](http://uc-r.github.io/r_notebook)
+
+For time series: 
+[fpp2](https://cran.r-project.org/web/packages/fpp2/index.html)
+
+For machine learning: 
+[mlbench](https://www.rdocumentation.org/packages/mlbench/versions/2.1-1)
+
+For dimentionality reduction: 
+[PCA](http://www.sthda.com/english/articles/31-principal-component-methods-in-r-practical-guide/118-principal-component-analysis-in-r-prcomp-vs-princomp/)
+
+For solving issues in respect to compilers: 
+[solution for installing Amelia](https://github.com/immunogenomics/harmony/issues/113)
+
+For understanding the state of r packages for data exploration
+[article](https://arxiv.org/pdf/1904.02101.pdf)
