@@ -58,7 +58,13 @@ library(urca)
 
 library(tidyr)
 library(psych)
-library(dplyr)
+library(dplyr, warn.conflicts = FALSE)
+options(dplyr.summarise.inform = FALSE) # Suppress summarise info
+library(plotly)
+library(readxl)
+library(leaflet.extras)
+library(radiant)
+library(ggthemes)
 ```
 
 # EDA {#eda}
@@ -68,10 +74,13 @@ library(dplyr)
 ```{r include=FALSE}
 # Loading all relevant files
 ## creating path to folder - easy to change later
-folder_path <- "/Users/germandesouza/Desktop/Advanced R EDA/Data" # change this if you want to create new sections in the EDA
+folder_path <- "/Users/germandesouza/Desktop/Advanced R EDA/Data"
+path_location = "/Users/germandesouza/Desktop/Advanced R EDA/Data/country_location.xlsx"
 ## assigning to variable
 train <- as.data.table(read.csv(file.path(folder_path,"train.csv"))) # created as dt
 test <- as.data.table(read.csv(file.path(folder_path,"test.csv")))
+coordinates <- read_excel(path_location)
+coordinates <- data.frame(coordinates)
 ```
 
 We have been provided with three different files (training, test and submission data sets), however we feel the need of solely analyzing the training data set. The main reasoning behind this is because the submission is a sample for formatting purposes and the test files are partially replicating the same information seen in the training file, but with different time horizons:
@@ -139,6 +148,75 @@ missmap(dat2,
         legend = FALSE)
 ```
 ### Overall COVID-19 Analysis
+```{r include=FALSE}
+#Data manipulation to create sunburst
+sunburst <- train[,c("Country_Region","Province_State","ConfirmedCases","Fatalities")] %>% group_by(Country_Region,Province_State) %>% summarize(TotalConfirmed=sum(ConfirmedCases),TotalFatalities=sum(Fatalities))
+```
+
+Now going deeper into the numbers, we can extract the following insights:
+
+- From **`r min(as.Date(train$Date))`** to **`r max(as.Date(train$Date))`**, the total cummulative number of confirmed COVID-19 cases worldwide reached to **`r formatC(sum(sunburst$TotalConfirmed), format="d", big.mark=",")`** and **`r formatC(sum(sunburst$TotalFatalities), format="d", big.mark=",")`** total cummulative fatalities. A proportion of **`r round(sum(sunburst$TotalFatalities)/sum(sunburst$TotalConfirmed)*100,2)`%** from worldwide confirmed cases. As it is seen in the figure "Worldwide COVID-19 Evolution (January-May)" the tangent of total confirmed cases per day is way higher than the ones seen in total fatalities per day.
+
+```{r, out.width="100%"}
+comp <- train %>% group_by(Date) %>% summarize(TotalConfirmed=sum(ConfirmedCases),TotalFatalities=sum(Fatalities))
+
+plot1 <- plot_ly(comp, x = ~Date, showlegend = T, width = 1000) %>%
+  add_lines(y = ~TotalConfirmed, name="Total Confirmed" ,line = list(color = "red"))%>%
+  add_lines(y = ~TotalFatalities, name="Total Fatalities", line = list(color = "green"))%>%
+  layout(title = 'Worldwide COVID-19 Evolution (January-May)', 
+         yaxis=list(title="Number of People"),
+         xaxis=list(title="Date"))
+plot1
+```
+- As it can be represented in the bar plot below, **USA is seen as the country with the most confirmed cases worldwide**. The other two consecutive countries that follows the USA is **Italy and Spain**. It would be interesting to analyse the evolution of these three countries in terms of total confirmed cases and fatalities over time. 
+
+```{r, out.width="100%"}
+comp <- train %>% group_by(Country_Region) %>% summarize(TotalConfirmed=sum(ConfirmedCases),TotalFatalities=sum(Fatalities)) %>% arrange(desc(TotalConfirmed), .by_group = TRUE) %>% top_n(10,TotalConfirmed)
+
+comp[,1] <- lapply(comp[,1], as.character)
+
+plot2 <- plot_ly(comp, x=comp$Country_Region,y = comp$TotalConfirmed, showlegend = T, width = 1000, type="bar", name="Total Confirmed")%>%
+  add_trace(y=comp$TotalFatalities, name= "Total Fatalities")%>%
+  layout(title = 'Top 10 Countries with the most COVID-19 Confirmed cases & Fatalities (January-May)',
+         xaxis = list(autorange = "reversed",title="Country"),
+         yaxis=list(title="Number of People"))
+
+plot2
+```
+
+- As we can see in the comparative barplot below, Italy has been the country that has been affected the earliest out of the top 3 countries with most confirmed cases. However, Italy's curve was the slowest compared to the other 2 countries. Spain was the second fastest country to increase its cumulative confirmed cases throughout time. Nevertheless, the US has rapidly scaled in terms of COVID-19 cases. **It would be interesting to do a deeper analysis per province state in the US. This could help us to determine which provinces have experienced a greater impact of the pandemic**. However due to the large number of provinces we will stick with the 5 most relevant ones.
+
+```{r, out.width="100%"}
+comp <- train %>% group_by(Date,Country_Region) %>% summarize(TotalConfirmed=sum(ConfirmedCases),TotalFatalities=sum(Fatalities)) %>% filter(Country_Region %in% c("US","Spain","Italy"))
+
+top3c <- function(method = "US") {
+  comp <- comp %>% filter(Country_Region %in% method)
+  plot_ly(x = comp$Date, y = comp$TotalConfirmed, name= method, type="bar", width = 1000)}
+
+subplot(
+  top3c(), top3c("Spain"), top3c("Italy"),
+  nrows = 3, shareX = TRUE
+)%>%
+  layout(title = 'Comparative between the top 3 countries with most confirmed cases (January-May)',
+         xaxis = list(title="Date"),
+         yaxis=list(title="Confirmed cases"))
+```
+
+- As we can see in the scatter plot below, **New York has been the province mostly affected by the exponential rise of confirmed cases in the US**. It shows an exploding incremental progression of confirmed cases, outpacing other precedent provinces in the US. Second it would be the **New Jersey** and the other three provinces are at par in terms of evolution.
+
+```{r, out.width="100%", warning=FALSE}
+comp <- (train %>% group_by(Country_Region,Province_State) %>% summarize(TotalConfirmed=sum(ConfirmedCases),TotalFatalities=sum(Fatalities)) %>% filter(Country_Region %in% c("US"))%>% arrange(desc(TotalConfirmed), .by_group = TRUE) %>% top_n(5,TotalConfirmed))[,2]
+
+comp[,1] <- lapply(comp[,1], as.character)
+comp <- as.vector(comp)
+
+comp <- train %>% group_by(Date,Country_Region,Province_State) %>% summarize(TotalConfirmed=sum(ConfirmedCases),TotalFatalities=sum(Fatalities)) %>% filter(Country_Region %in% c("US"))%>% filter(Province_State %in% c("New York","New Jersey","Massachusetts","Illinois","California"))
+
+plot_ly(comp, x = ~Date, y = ~TotalConfirmed, color = ~Province_State, mode="markers" ,type = "scatter", width = 1000)%>%
+  layout(title = 'Top 5 provinces in USA with the highest levels of confirmed cases (January-May)',
+         xaxis = list(title="Date"),
+         yaxis=list(title="Confirmed cases"))
+```
 
 
 ### Univariate Analysis per Country
@@ -147,8 +225,9 @@ In this section our team aims to learn the overall distribution and dispersion o
 
 #### Confirmed COVID-19 Cases
 
-Give explanation of the confirmed table below.
-```{r}
+As we have explained in the "Overall COVID 19 Analysis", the top countries with the maximum number of cases are the US, Italy and Spain. However, it is very interesting to observe a large discrepancy in terms of value ranges, median's and standard deviations. Therefore, our team attaches this descriptive table for further EDA.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
 hello2 <- train[,3:5] 
 hello2 <- hello2 %>% group_by(Date, Country_Region) %>% summarise(ConfirmedCases = sum(ConfirmedCases))
 hello2 <- pivot_wider(hello2, names_from = Country_Region, values_from = ConfirmedCases)
@@ -160,8 +239,9 @@ confirmed
 
 #### Fatalities COVID-19 Cases
 
-Give explanation of the fatalities table below.
-```{r, warning=FALSE}
+Regarding fatalities, we can observe that there are new countries in at the top of the list compared to the table above. Countries such as **Belgium and Brasil** although they weren't able to make it on the top 10 list in terms of confirmed cases, they managed to be one of the countries with highest mortality rates from COVID-19. This is interesting to assess underlying factors triggering these results (for instance: population, government expenditure on healthcare, healthcare data).
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
 hello3 <- train[,3:4] %>% mutate(Fatalities=train$Fatalities)
 hello3 <- hello3 %>% group_by(Date, Country_Region) %>% summarise(Fatalities = sum(Fatalities))
 hello3 <- pivot_wider(hello3, names_from = Country_Region, values_from = Fatalities)
@@ -169,6 +249,66 @@ hello3 <- pivot_wider(hello3, names_from = Country_Region, values_from = Fatalit
 fatalities <- as.data.frame(describe(hello3[,2:185]))# descriptive statistics using psych
 fatalities <- fatalities[order(-fatalities$mean),3:13]
 fatalities
+```
+
+### Visualising Geospatial Data COVID-19
+
+This visualisation aids us to determine if there is a geolocation pattern in terms of the COVID spread. COVID spreadability has been scattered all around the globe, it is very difficult to determine a pattern as it is dependent on other factors as we have stated in section "Fatalities COVID-19 Cases".
+
+```{r, warning=FALSE, out.width="100%"}
+new_training <- train %>% group_by(Country_Region)%>% summarise(Fatalities = sum(Fatalities),Cases = sum(ConfirmedCases))
+new_training <- merge(x = new_training,y = coordinates,by.x = "Country_Region", by.y = "name",all = FALSE)
+
+#p <- new_training[,7:8]
+#setDT(p)[, names(p) := lapply(.SD, function(x) if(is.factor(x)) as.numeric(as.character(x)) else x)]
+
+#new_training[,7:8] <- p
+
+new_training$size <- 10000
+new_training[new_training$Cases > 5000,]$size <-  80000
+new_training[new_training$Cases > 10000,]$size <-  150000
+
+new_training$col <- "blue"
+new_training[new_training$Fatalities > 2000,]$col <-  "darkblue"
+new_training[new_training$Fatalities > 10000,]$col <-  "red"
+
+new_training$countryC <- paste("country", ", Cases: " ,toString(0))
+for (country in new_training$Country_Region){
+  (new_training[new_training$Country_Region == country,]$countryC
+   <- paste(country, ", Cases: " ,formatC((new_training[new_training$Country_Region == country,]$Cases), format="d", big.mark=",")))
+}
+
+cov_map <- (leaflet(data = new_training,width = "100%") %>% 
+              addProviderTiles(providers$Stamen.TonerBackground) %>% 
+              addCircles(lng = new_training$longitude, lat = new_training$latitude, popup = ~countryC, color = ~col, radius = ~size,fill = F))%>% 
+              setView(11, 49,  zoom = 2) %>%
+  addMiniMap(zoomLevelOffset = -4) %>%
+            addResetMapButton()
+
+cov_map <-  addLegend(cov_map,"bottomright", 
+                  labels = c("<2000","2000+","10000+"), 
+                  colors = c("blue","darkblue","red"),
+                  title = "Fatalities",
+                  opacity = 1) 
+cov_map
+```
+
+### Weekday Seasonality
+
+In order to get a better idea if there is an existing pattern in the different days of the week in distinct months, we wanted to give a visualisation alternative (heatmap) to identify if there was a pattern in terms of weekday seasonality. As we can see, the first months there is no conclusive pattern, however as we approach to March we start to see some patterns on indicative days. But still, this is not enough to drive conclusive insights given the short limited scope per country and the limited amount of data provided throughout different months.
+
+```{r, warning=FALSE, out.width="100%"}
+train %>% 
+  mutate(wday = wday(Date, label = TRUE),
+         month = month(Date, label = TRUE),
+         year = year(Date)) %>% 
+  group_by(wday, month, year) %>% 
+  summarise(cases = sum(ConfirmedCases)/1e6) %>%
+  ggplot(aes(month, wday, fill = cases)) +
+  geom_tile() +
+  labs(x = "Month of the year", y = "Day of the week", fill = "Relative Confirmed Cases") +
+  scale_fill_distiller(palette = "Spectral") +
+  theme_hc()
 ```
 
 # Annex I {#annex-1}
